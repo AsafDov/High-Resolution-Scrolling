@@ -5,10 +5,12 @@
 AS5600 as5600(&Wire1);
 int16_t lastPosition = 0;
 int16_t threshold = 0;
-int16_t sensitivity = 10;
+int16_t sensitivity = 8;
 int16_t v=10;
+int dir = -1;
 const int pinButton = 0; 
 const bool activeState = LOW; 
+static int32_t accum = 0;
 
 #define REPORT_ID_MOUSE      1
 #define REPORT_ID_MULTIPLIER 2
@@ -84,7 +86,7 @@ void loop() {
   TinyUSBDevice.task();
   #endif
 
-  if (!usb_hid.ready()) return;
+  // if (!usb_hid.ready()) return;
 
 // 1. Get current position
   int16_t currentPosition = as5600.readAngle();
@@ -95,32 +97,32 @@ void loop() {
   // 3. Handle the 0-4096 wrap-around (assuming 4096 range)
   if (delta > 2048) delta -= 4096;
   else if (delta < -2048) delta += 4096;
+  lastPosition = currentPosition;
+  accum += delta;
 
-  int8_t scrollValue = (int8_t)(delta / sensitivity);
-
-  // 4. Send report if there is movement
-  // if (scrollValue > threshold || scrollValue < -threshold) {
-  //   hi_res_mouse_report_t report = {0}; // Zero-initialize 
-    
-  //   // Divide delta by a constant if the scroll is too fast/sensitive
-  //   report.wheel = (int8_t)(delta/sensitivity); 
-    
-  //   usb_hid.sendReport(REPORT_ID_MOUSE, &report, sizeof(report)); 
-  //   lastPosition = currentPosition; 
-  // }
+  int8_t scrollValue = 0;
+  while (accum >= sensitivity) { scrollValue++; accum -= sensitivity; }
+  while (accum <= -sensitivity) { scrollValue--; accum += sensitivity; }
 
   if (scrollValue != 0) {
-    hi_res_mouse_report_t report = {0};
-    report.wheel = scrollValue; 
+    if (usb_hid.ready()) {
+      hi_res_mouse_report_t report = {0};
+      report.wheel = dir*scrollValue; 
     
-    usb_hid.sendReport(REPORT_ID_MOUSE, &report, sizeof(report)); 
-    
+          // If send fails, PUT IT BACK so it retries next loop
+      if (!usb_hid.sendReport(REPORT_ID_MOUSE, &report, sizeof(report))) {
+        accum += (int32_t)scrollValue * sensitivity;
+      }
+    } else {
+      // Not ready: keep it for later (do nothing)
+      accum += (int32_t)scrollValue * sensitivity;
+    }
     // IMPORTANT: Only update lastPosition by the amount we actually scrolled.
     // This keeps the "leftover" degrees for the next loop.
-    lastPosition += (scrollValue * sensitivity); 
-    if (lastPosition >= 4096) lastPosition -= 4096;
-    else if (lastPosition < 0) lastPosition += 4096;
+    // lastPosition += (scrollValue * sensitivity); 
+    // if (lastPosition >= 4096) lastPosition -= 4096;
+    // else if (lastPosition < 0) lastPosition += 4096;
 }
 
-  delay(10);
+  delay(1);
 }
